@@ -32,10 +32,18 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
-client = DerivClient()
+import os
+from dotenv import load_dotenv
+load_dotenv()
+
+DERIV_APP_ID = os.getenv("DERIV_APP_ID", "1089").strip()
+client = DerivClient(app_id=DERIV_APP_ID)
 builder = CandleBuilder()
 
+DERIV_TOKEN = os.getenv("DERIV_API_TOKEN", "").strip()
+
 tick_count = 0
+last_signal_direction = None
 
 async def on_tick(tick: Tick):
     global tick_count
@@ -68,13 +76,24 @@ async def on_tick(tick: Tick):
     
     signal = evaluate_strategy(builder.closed_candles, seconds_in_cycle)
     if signal.type.value != "NONE":
+        global last_signal_direction
+        last_signal_direction = "CALL" if signal.type.value == "BUY" else "PUT"
         logger.info(f"SIGNAL DETECTED: {signal.type.value} | Reason: {signal.reason}")
         await manager.broadcast({"event": "signal", "data": {"type": signal.type.value, "reason": signal.reason}})
         
         # Avaliação de Risco (Fase A)
         from app.engines.risk import evaluate_risk
         from app.models.market import AccountState
-        account_state = AccountState(balance=100.0, current_consecutive_losses=0)
+        account_state = AccountState(
+            balance=100.0, 
+            current_consecutive_losses=0,
+            daily_pnl=0.0,
+            current_gale_level=0,
+            daily_stop_loss=50.0,
+            daily_stop_gain=50.0,
+            max_gale=2,
+            stake_initial=1.0
+        )
         risk_eval = evaluate_risk(signal, account_state)
         logger.info(f"RISK EVALUATION: {risk_eval.action.value} | {risk_eval.reason}")
         
@@ -91,8 +110,9 @@ async def on_tick(tick: Tick):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
+    logger.info("Iniciando conexão com a Deriv...")
     client.add_tick_callback(on_tick)
-    task = asyncio.create_task(client.connect_and_listen("R_100"))
+    task = asyncio.create_task(client.connect_and_listen(token=DERIV_TOKEN, symbol="R_100"))
     yield
     # Shutdown
     client.stop()
@@ -119,7 +139,11 @@ async def websocket_endpoint(websocket: WebSocket):
             try:
                 cmd = json.loads(data)
                 if cmd.get("command") == "APPROVE_TRADE":
-                    logger.info("✅ TRADE APROVADO PELO OPERADOR! (Execução simulada na Fase D)")
+                    logger.info("✅ TRADE APROVADO PELO OPERADOR! Executando ordem oficial na Deriv...")
+                    if last_signal_direction:
+                        asyncio.create_task(client.buy_contract(direction=last_signal_direction, amount=1.0))
+                    else:
+                        logger.warning("Nenhum sinal ativo para aprovar.")
                 elif cmd.get("command") == "IGNORE_TRADE":
                     logger.info("❌ Trade ignorado pelo operador.")
             except:
@@ -134,3 +158,37 @@ def get_status():
         "current_candle": builder.current_candle,
         "closed_candles_count": len(builder.closed_candles)
     }
+
+@app.get("/force_signal")
+async def force_signal_endpoint():
+    from app.models.market import Signal, SignalType
+    global last_signal_direction
+    signal = Signal(type=SignalType.CALL, reason="Sinal de TESTE injetado manualmente.")
+    last_signal_direction = "CALL"
+    logger.info("🔥 FAKE SIGNAL INJECTED")
+    await manager.broadcast({"event": "signal", "data": {"type": signal.type.value, "reason": signal.reason}})
+    
+    from app.engines.risk import evaluate_risk
+    from app.models.market import AccountState
+    account_state = AccountState(
+        balance=100.0, 
+        current_consecutive_losses=0,
+        daily_pnl=0.0,
+        current_gale_level=0,
+        daily_stop_loss=50.0,
+        daily_stop_gain=50.0,
+        max_gale=2,
+        stake_initial=1.0
+    )
+    risk_eval = evaluate_risk(signal, account_state)
+    
+    from app.rag.agent import explain_signal
+    logger.info("🤖 Solicitando análise do Agente (RAG)...")
+    try:
+        explanation = await asyncio.to_thread(explain_signal, signal, risk_eval.reason)
+        await manager.broadcast({"event": "agent_message", "data": explanation})
+        logger.info(f"\n{'='*40}\n🤖 CO-PILOTO RAG DIZ:\n{explanation}\n{'='*40}")
+    except Exception as e:
+        logger.error(f"Erro no Agente: {e}")
+        
+    return {"status": "ok", "message": "Sinal falso injetado e enviado ao frontend!"}

@@ -1,12 +1,15 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
+import { createChart, ColorType, CandlestickSeries } from "lightweight-charts";
 
 export default function Home() {
   const [liveData, setLiveData] = useState<any>({ quote: 0, candle: null });
   const [signal, setSignal] = useState<any>(null);
   const [agentMessage, setAgentMessage] = useState<string>("");
   const ws = useRef<WebSocket | null>(null);
+  const chartContainerRef = useRef<HTMLDivElement>(null);
+  const chartSeriesRef = useRef<any>(null);
 
   useEffect(() => {
     // Connect to WebSocket
@@ -27,6 +30,60 @@ export default function Home() {
       if (ws.current) ws.current.close();
     };
   }, []);
+
+  useEffect(() => {
+    if (!chartContainerRef.current) return;
+    
+    const chart = createChart(chartContainerRef.current, {
+      layout: {
+        background: { type: ColorType.Solid, color: 'transparent' },
+        textColor: '#d1d4dc',
+      },
+      grid: {
+        vertLines: { color: 'rgba(42, 46, 57, 0)' },
+        horzLines: { color: 'rgba(42, 46, 57, 0.2)' },
+      },
+      width: chartContainerRef.current.clientWidth,
+      height: 250,
+      timeScale: {
+        timeVisible: true,
+        secondsVisible: false,
+      }
+    });
+
+    const candlestickSeries = chart.addSeries(CandlestickSeries, {
+        upColor: '#26a69a',
+        downColor: '#ef5350',
+        borderVisible: false,
+        wickUpColor: '#26a69a',
+        wickDownColor: '#ef5350',
+    });
+    chartSeriesRef.current = candlestickSeries;
+
+    const handleResize = () => {
+      if (chartContainerRef.current) {
+        chart.applyOptions({ width: chartContainerRef.current.clientWidth });
+      }
+    };
+    window.addEventListener('resize', handleResize);
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      chart.remove();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (chartSeriesRef.current && liveData.candle) {
+        chartSeriesRef.current.update({
+            time: liveData.candle.epoch,
+            open: liveData.candle.open,
+            high: liveData.candle.high,
+            low: liveData.candle.low,
+            close: liveData.candle.close,
+        });
+    }
+  }, [liveData.candle]);
 
   const handleApprove = () => {
     if (ws.current) {
@@ -136,6 +193,10 @@ export default function Home() {
             <p style={{ opacity: 0.5, fontSize: "0.9rem" }}>Aguardando sincronização da Deriv...</p>
           )}
         </div>
+        <div 
+          ref={chartContainerRef} 
+          style={{ width: "100%", height: "250px", marginTop: "24px" }} 
+        />
       </div>
     </div>
   );
