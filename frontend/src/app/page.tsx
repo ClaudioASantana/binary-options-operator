@@ -9,7 +9,7 @@ export default function Home() {
   const [signal, setSignal] = useState<any>(null);
   const [agentMessage, setAgentMessage] = useState<string>("");
   const [catalog, setCatalog] = useState<any[]>([]);
-  const [activeConfig, setActiveConfig] = useState<any>({ timeframe: 300, candles: 9 });
+  const [activeConfig, setActiveConfig] = useState<any>({ timeframe: 300, candles: 5 });
   const [autoOptimize, setAutoOptimize] = useState<boolean>(false);
   const [simulatorState, setSimulatorState] = useState<any>(null);
   const [newsStatus, setNewsStatus] = useState<any>(null);

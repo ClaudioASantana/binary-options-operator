@@ -33,7 +33,7 @@ class BotInstance:
         
         self.paper_trader = PaperTrader(initial_balance=1000.0, payout_rate=0.95)
         
-        self.active_config = {"timeframe": 300, "candles": 9}
+        self.active_config = {"timeframe": 300, "candles": 5}
         self.auto_optimize = False
         self.global_catalog = []
         
@@ -134,10 +134,10 @@ class BotInstance:
                     if signal.type.value != "NONE":
                         strategy_info = f"M{tf//60}/{req_candles}V"
                         rsi_val = calculate_rsi(builder.closed_candles)
-                        if signal.type.value == "CALL" and rsi_val >= 35:
+                        if signal.type.value == "CALL" and rsi_val >= 30:
                             # logger.warning(f"🚫 [{self.symbol} - {strategy_info}] CALL bloqueado. RSI={rsi_val}")
                             signal.type = SignalType.NONE
-                        elif signal.type.value == "PUT" and rsi_val <= 65:
+                        elif signal.type.value == "PUT" and rsi_val <= 70:
                             # logger.warning(f"🚫 [{self.symbol} - {strategy_info}] PUT bloqueado. RSI={rsi_val}")
                             signal.type = SignalType.NONE
                             

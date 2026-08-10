@@ -1,0 +1,202 @@
+[
+    {
+        "timeframe": "M5",
+        "candles": 3,
+        "gale": 3,
+        "rsi": "35/65",
+        "wins": 163,
+        "losses": 4,
+        "win_rate": 97.60479041916167,
+        "pnl": 832.5
+    },
+    {
+        "timeframe": "M5",
+        "candles": 3,
+        "gale": 3,
+        "rsi": "30/70",
+        "wins": 83,
+        "losses": 1,
+        "win_rate": 98.80952380952381,
+        "pnl": 593.5
+    },
+    {
+        "timeframe": "M5",
+        "candles": 5,
+        "gale": 3,
+        "rsi": "35/65",
+        "wins": 73,
+        "losses": 1,
+        "win_rate": 98.64864864864865,
+        "pnl": 502.5
+    },
+    {
+        "timeframe": "M5",
+        "candles": 5,
+        "gale": 3,
+        "rsi": "30/70",
+        "wins": 49,
+        "losses": 0,
+        "win_rate": 100.0,
+        "pnl": 452.5
+    },
+    {
+        "timeframe": "M5",
+        "candles": 3,
+        "gale": 2,
+        "rsi": "30/70",
+        "wins": 80,
+        "losses": 5,
+        "win_rate": 94.11764705882352,
+        "pnl": 379.0
+    },
+    {
+        "timeframe": "M5",
+        "candles": 5,
+        "gale": 2,
+        "rsi": "30/70",
+        "wins": 48,
+        "losses": 1,
+        "win_rate": 97.95918367346938,
+        "pnl": 376.5
+    },
+    {
+        "timeframe": "M5",
+        "candles": 5,
+        "gale": 2,
+        "rsi": "35/65",
+        "wins": 70,
+        "losses": 4,
+        "win_rate": 94.5945945945946,
+        "pnl": 353.5
+    },
+    {
+        "timeframe": "M5",
+        "candles": 5,
+        "gale": 1,
+        "rsi": "30/70",
+        "wins": 45,
+        "losses": 4,
+        "win_rate": 91.83673469387756,
+        "pnl": 302.5
+    },
+    {
+        "timeframe": "M1",
+        "candles": 3,
+        "gale": 1,
+        "rsi": "35/65",
+        "wins": 176,
+        "losses": 45,
+        "win_rate": 79.63800904977376,
+        "pnl": 293.0
+    },
+    {
+        "timeframe": "M1",
+        "candles": 3,
+        "gale": 2,
+        "rsi": "25/75",
+        "wins": 29,
+        "losses": 0,
+        "win_rate": 100.0,
+        "pnl": 262.5
+    },
+    {
+        "timeframe": "M1",
+        "candles": 3,
+        "gale": 3,
+        "rsi": "25/75",
+        "wins": 29,
+        "losses": 0,
+        "win_rate": 100.0,
+        "pnl": 262.5
+    },
+    {
+        "timeframe": "M1",
+        "candles": 3,
+        "gale": 3,
+        "rsi": "30/70",
+        "wins": 80,
+        "losses": 3,
+        "win_rate": 96.3855421686747,
+        "pnl": 259.0
+    },
+    {
+        "timeframe": "M5",
+        "candles": 3,
+        "gale": 3,
+        "rsi": "25/75",
+        "wins": 26,
+        "losses": 0,
+        "win_rate": 100.0,
+        "pnl": 237.5
+    },
+    {
+        "timeframe": "M1",
+        "candles": 5,
+        "gale": 3,
+        "rsi": "30/70",
+        "wins": 39,
+        "losses": 1,
+        "win_rate": 97.5,
+        "pnl": 194.0
+    },
+    {
+        "timeframe": "M5",
+        "candles": 3,
+        "gale": 2,
+        "rsi": "35/65",
+        "wins": 153,
+        "losses": 17,
+        "win_rate": 90.0,
+        "pnl": 192.0
+    },
+    {
+        "timeframe": "M5",
+        "candles": 7,
+        "gale": 3,
+        "rsi": "30/70",
+        "wins": 18,
+        "losses": 0,
+        "win_rate": 100.0,
+        "pnl": 166.5
+    },
+    {
+        "timeframe": "M1",
+        "candles": 7,
+        "gale": 2,
+        "rsi": "30/70",
+        "wins": 18,
+        "losses": 0,
+        "win_rate": 100.0,
+        "pnl": 163.5
+    },
+    {
+        "timeframe": "M1",
+        "candles": 7,
+        "gale": 3,
+        "rsi": "30/70",
+        "wins": 18,
+        "losses": 0,
+        "win_rate": 100.0,
+        "pnl": 163.5
+    },
+    {
+        "timeframe": "M5",
+        "candles": 3,
+        "gale": 2,
+        "rsi": "25/75",
+        "wins": 25,
+        "losses": 1,
+        "win_rate": 96.15384615384616,
+        "pnl": 161.5
+    },
+    {
+        "timeframe": "M5",
+        "candles": 5,
+        "gale": 2,
+        "rsi": "25/75",
+        "wins": 16,
+        "losses": 0,
+        "win_rate": 100.0,
+        "pnl": 150.5
+    }
+]
