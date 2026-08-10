@@ -13,6 +13,7 @@ export default function Home() {
   const [autoOptimize, setAutoOptimize] = useState<boolean>(false);
   const [simulatorState, setSimulatorState] = useState<any>(null);
   const [newsStatus, setNewsStatus] = useState<any>(null);
+  const [portfolio, setPortfolio] = useState<any>(null);
   const [activeSymbol, setActiveSymbol] = useState<string>("R_100");
   const ws = useRef<WebSocket | null>(null);
   const chartContainerRef = useRef<HTMLDivElement>(null);
@@ -47,6 +48,19 @@ export default function Home() {
     return () => {
       if (ws.current) ws.current.close();
     };
+  }, []);
+
+  useEffect(() => {
+    const fetchPortfolio = async () => {
+      try {
+        const res = await fetch("http://localhost:8000/portfolio");
+        const data = await res.json();
+        setPortfolio(data);
+      } catch (e) {}
+    };
+    fetchPortfolio();
+    const interval = setInterval(fetchPortfolio, 5000);
+    return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
@@ -134,7 +148,7 @@ export default function Home() {
 
   const handleChangeSymbol = (symbol: string) => {
     if (ws.current) {
-      ws.current.send(JSON.stringify({ command: "SET_SYMBOL", symbol }));
+      ws.current.send(JSON.stringify({ command: "WATCH_SYMBOL", symbol }));
       setActiveSymbol(symbol);
     }
   };
@@ -153,25 +167,37 @@ export default function Home() {
         <div className="glass" style={{ padding: "16px", display: "flex", flexDirection: "column", gap: "10px" }}>
           <h3 style={{ margin: 0, fontSize: "1rem", color: "var(--accent)" }}>Ativo Operacional</h3>
           <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-            {["R_10", "R_25", "R_50", "R_75", "R_100"].map(sym => (
-              <button
-                key={sym}
-                onClick={() => handleChangeSymbol(sym)}
-                style={{
-                  flex: 1,
-                  padding: "8px 12px",
-                  background: activeSymbol === sym ? "var(--accent)" : "rgba(255,255,255,0.05)",
-                  color: activeSymbol === sym ? "#000" : "#fff",
-                  border: `1px solid ${activeSymbol === sym ? "var(--accent)" : "rgba(255,255,255,0.1)"}`,
-                  borderRadius: "6px",
-                  cursor: "pointer",
-                  fontWeight: activeSymbol === sym ? "bold" : "normal",
-                  transition: "all 0.2s"
-                }}
-              >
-                {sym.replace("R_", "Vol ")}
-              </button>
-            ))}
+            {["R_10", "R_25", "R_50", "R_75", "R_100", "1HZ10V", "1HZ25V", "1HZ50V", "1HZ75V", "1HZ100V", "RDBEAR", "RDBULL"].map(sym => {
+              let label = sym;
+              if (sym.startsWith("R_")) label = sym.replace("R_", "Vol ");
+              if (sym.startsWith("1HZ")) {
+                label = sym.replace("1HZ", "Vol ");
+                label = label.slice(0, -1) + " (1s)";
+              }
+              if (sym === "RDBEAR") label = "Bear";
+              if (sym === "RDBULL") label = "Bull";
+              
+              return (
+                <button
+                  key={sym}
+                  onClick={() => handleChangeSymbol(sym)}
+                  style={{
+                    flex: "1 1 20%",
+                    padding: "6px 8px",
+                    background: activeSymbol === sym ? "var(--accent)" : "rgba(255,255,255,0.05)",
+                    color: activeSymbol === sym ? "#000" : "#fff",
+                    border: `1px solid ${activeSymbol === sym ? "var(--accent)" : "rgba(255,255,255,0.1)"}`,
+                    borderRadius: "6px",
+                    cursor: "pointer",
+                    fontSize: "0.85rem",
+                    fontWeight: activeSymbol === sym ? "bold" : "normal",
+                    transition: "all 0.2s"
+                  }}
+                >
+                  {label}
+                </button>
+              );
+            })}
           </div>
         </div>
 
@@ -237,7 +263,7 @@ export default function Home() {
                   M{tf / 60}
                 </div>
                 {[3, 5, 7, 9].map(c => {
-                  const cat = catalog.find(x => x.timeframe === tf && x.candles === c);
+                  const cat = (catalog || []).find(x => x.timeframe === tf && x.candles === c);
                   const winRate = cat ? cat.stats.win_rate : 0;
                   const isManualActive = activeConfig.timeframe === tf && activeConfig.candles === c;
                   const isActive = autoOptimize ? (winRate >= 80) : isManualActive;
@@ -298,7 +324,7 @@ export default function Home() {
         {simulatorState && (
         <div style={{ display: "flex", gap: "20px" }}>
           <div className="glass" style={{ padding: "20px", flex: 1 }}>
-            <h3 style={{ marginBottom: "16px", color: "var(--accent)" }}>💳 Simulador de Conta</h3>
+            <h3 style={{ marginBottom: "16px", color: "var(--accent)" }}>💳 Conta (Deste Ativo)</h3>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: "8px" }}>
               <span style={{ fontSize: "0.9rem", opacity: 0.7 }}>Saldo Virtual</span>
               <span style={{ fontSize: "1.5rem", fontWeight: "bold" }}>${simulatorState.balance.toFixed(2)}</span>
