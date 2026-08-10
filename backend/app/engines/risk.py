@@ -9,7 +9,7 @@ def evaluate_risk(signal: Signal, account: AccountState) -> RiskEvaluation:
             gale_level=0
         )
         
-    if account.daily_pnl <= account.daily_stop_loss:
+    if account.daily_pnl <= -account.daily_stop_loss:
         return RiskEvaluation(
             decision=RiskDecision.BLOCKED,
             reason=f"Daily stop-loss reached: {account.daily_pnl}",
