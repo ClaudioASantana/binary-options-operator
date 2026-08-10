@@ -15,6 +15,18 @@ export default function Home() {
   const [newsStatus, setNewsStatus] = useState<any>(null);
   const [portfolio, setPortfolio] = useState<any>(null);
   const [activeSymbol, setActiveSymbol] = useState<string>("R_100");
+  
+  // Backtest State
+  const [currentView, setCurrentView] = useState<"dashboard" | "backtest">("dashboard");
+  const [backtestResults, setBacktestResults] = useState<any[]>([]);
+  const [isBacktesting, setIsBacktesting] = useState(false);
+  const [autoCalibrateProgress, setAutoCalibrateProgress] = useState<{current: number, total: number, message: string} | null>(null);
+  
+  const activeSymbolRef = useRef(activeSymbol);
+  useEffect(() => {
+    activeSymbolRef.current = activeSymbol;
+  }, [activeSymbol]);
+
   const ws = useRef<WebSocket | null>(null);
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartSeriesRef = useRef<any>(null);
@@ -25,6 +37,12 @@ export default function Home() {
     
     ws.current.onmessage = (event) => {
       const msg = JSON.parse(event.data);
+      
+      // Filtra mensagens que não são do ativo selecionado (se a mensagem tiver symbol)
+      if (msg.symbol && msg.symbol !== activeSymbolRef.current) {
+        return;
+      }
+      
       if (msg.event === "tick") {
         setLiveData(msg.data);
       } else if (msg.event === "signal") {
@@ -134,15 +152,96 @@ export default function Home() {
   const handleSetConfig = (timeframe: number, candles: number) => {
     if (ws.current) {
       ws.current.send(JSON.stringify({ command: "SET_CONFIG", timeframe, candles }));
-      setActiveConfig({ timeframe, candles });
+      setActiveConfig({ ...activeConfig, timeframe, candles });
     }
+  };
+
+  const handleApplyStrategy = (strategy: any) => {
+    if (ws.current) {
+      ws.current.send(JSON.stringify({ 
+        command: "SET_CONFIG", 
+        timeframe: strategy.timeframe, 
+        candles: strategy.candles,
+        gale: strategy.gale,
+        rsi_oversold: strategy.rsi_oversold,
+        rsi_overbought: strategy.rsi_overbought
+      }));
+      setActiveConfig({ 
+        timeframe: strategy.timeframe, 
+        candles: strategy.candles,
+        gale: strategy.gale,
+        rsi_oversold: strategy.rsi_oversold,
+        rsi_overbought: strategy.rsi_overbought
+      });
+      setCurrentView("dashboard");
+    }
+  };
+
+  const runBacktest = async () => {
+    setIsBacktesting(true);
+    setBacktestResults([]);
+    try {
+      const res = await fetch("http://localhost:8000/api/optimize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ symbol: activeSymbol })
+      });
+      const data = await res.json();
+      setBacktestResults(data.results || []);
+    } catch (e) {
+      console.error(e);
+    }
+    setIsBacktesting(false);
+  };
+
+  const handleAutoCalibrateAll = async () => {
+    const symbols = ["R_10", "R_25", "R_50", "R_75", "R_100", "1HZ10V", "1HZ25V", "1HZ50V", "1HZ75V", "1HZ100V", "RDBEAR", "RDBULL"];
+    setAutoCalibrateProgress({ current: 0, total: symbols.length, message: "Iniciando calibração em massa..." });
+    
+    for (let i = 0; i < symbols.length; i++) {
+      const sym = symbols[i];
+      setAutoCalibrateProgress({ current: i + 1, total: symbols.length, message: `Baixando velas e otimizando ${sym}...` });
+      
+      try {
+        const res = await fetch("http://localhost:8000/api/optimize", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ symbol: sym })
+        });
+        const data = await res.json();
+        if (data.results && data.results.length > 0) {
+          const best = data.results[0];
+          if (ws.current) {
+            ws.current.send(JSON.stringify({ 
+              command: "SET_CONFIG", 
+              symbol: sym,
+              timeframe: best.timeframe, 
+              candles: best.candles,
+              gale: best.gale,
+              rsi_oversold: best.rsi_oversold,
+              rsi_overbought: best.rsi_overbought
+            }));
+          }
+        }
+      } catch (e) {
+        console.error(`Erro otimizando ${sym}`, e);
+      }
+    }
+    
+    setAutoCalibrateProgress({ current: symbols.length, total: symbols.length, message: "✅ Calibração Completa! Todo o portfólio atualizado." });
+    setTimeout(() => setAutoCalibrateProgress(null), 5000);
   };
 
   const handleToggleAutoOptimize = () => {
     if (ws.current) {
       const newState = !autoOptimize;
-      ws.current.send(JSON.stringify({ command: "TOGGLE_AUTO_OPTIMIZE", enabled: newState }));
-      setAutoOptimize(newState);
+      ws.current.send(JSON.stringify({ command: "TOGGLE_AUTO_OPTIMIZE" }));
+    }
+  };
+
+  const handleToggleGlobalMutant = () => {
+    if (ws.current) {
+      ws.current.send(JSON.stringify({ command: "TOGGLE_AUTO_OPTIMIZE_ALL", active: !autoOptimize }));
     }
   };
 
@@ -154,14 +253,33 @@ export default function Home() {
   };
 
   return (
-    <div className="layout-container">
-      {/* Esquerda: Agente RAG e Controles */}
-      <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
-        
-        <header>
-          <h1>Cockpit de Decisão</h1>
-          <p style={{ opacity: 0.6 }}>Análise Quantitativa + IA</p>
-        </header>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
+      {/* Top Navbar */}
+      <div style={{ padding: '16px 20px', background: 'rgba(0,0,0,0.4)', borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', gap: '16px', alignItems: 'center' }}>
+         <div style={{ fontSize: '1.2rem', fontWeight: 'bold', marginRight: '20px' }}>BinaryOperator</div>
+         <button 
+           onClick={() => setCurrentView('dashboard')}
+           style={{ background: currentView === 'dashboard' ? 'var(--accent)' : 'transparent', color: currentView === 'dashboard' ? '#000' : '#fff', border: 'none', padding: '8px 16px', borderRadius: '4px', fontWeight: 'bold', cursor: 'pointer' }}
+         >
+           Dashboard Live
+         </button>
+         <button 
+           onClick={() => setCurrentView('backtest')}
+           style={{ background: currentView === 'backtest' ? 'var(--accent)' : 'transparent', color: currentView === 'backtest' ? '#000' : '#fff', border: 'none', padding: '8px 16px', borderRadius: '4px', fontWeight: 'bold', cursor: 'pointer' }}
+         >
+           Laboratório (Backtest)
+         </button>
+      </div>
+      
+      {currentView === 'dashboard' ? (
+        <div className="layout-container" style={{ flex: 1, overflow: 'auto' }}>
+          {/* Esquerda: Agente RAG e Controles */}
+          <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+            
+            <header>
+              <h1>Cockpit de Decisão</h1>
+              <p style={{ opacity: 0.6 }}>Análise Quantitativa + IA</p>
+            </header>
 
         {/* Seletor de Ativo */}
         <div className="glass" style={{ padding: "16px", display: "flex", flexDirection: "column", gap: "10px" }}>
@@ -225,24 +343,44 @@ export default function Home() {
         <div className="glass" style={{ padding: "20px", overflowX: "auto" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
             <h3 style={{ margin: 0 }}>📊 Catalogador de Sinais</h3>
-            <button 
-              onClick={handleToggleAutoOptimize}
-              style={{ 
-                padding: "8px 16px", 
-                borderRadius: "20px", 
-                border: "none",
-                background: autoOptimize ? "var(--accent)" : "rgba(255,255,255,0.1)",
-                color: "white",
-                fontWeight: "bold",
-                cursor: "pointer",
-                transition: "0.2s",
-                display: "flex",
-                alignItems: "center",
-                gap: "8px"
-              }}
-            >
-              {autoOptimize ? "🧬 Mutante Ativo" : "🔧 Modo Manual"}
-            </button>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button 
+                onClick={handleToggleAutoOptimize}
+                style={{ 
+                  padding: "8px 16px", 
+                  borderRadius: "20px", 
+                  border: "none",
+                  background: autoOptimize ? "var(--accent)" : "rgba(255,255,255,0.1)",
+                  color: "white",
+                  fontWeight: "bold",
+                  cursor: "pointer",
+                  transition: "0.2s",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px"
+                }}
+              >
+                {autoOptimize ? "🧬 Mutante Ativo" : "🔧 Modo Manual"}
+              </button>
+              <button 
+                onClick={handleToggleGlobalMutant}
+                style={{ 
+                  padding: "8px 16px", 
+                  borderRadius: "20px", 
+                  border: `1px solid ${autoOptimize ? "var(--accent)" : "rgba(255,255,255,0.2)"}`,
+                  background: "transparent",
+                  color: autoOptimize ? "var(--accent)" : "white",
+                  fontWeight: "bold",
+                  cursor: "pointer",
+                  transition: "0.2s",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px"
+                }}
+              >
+                🧬 Mutante Global
+              </button>
+            </div>
           </div>
           <p style={{ fontSize: "0.85rem", opacity: 0.7, marginBottom: "16px" }}>
             {autoOptimize ? 
@@ -451,6 +589,74 @@ export default function Home() {
           style={{ width: "100%", height: "250px", marginTop: "24px" }} 
         />
       </div>
+    </div>
+      ) : (
+        <div style={{ flex: 1, overflow: 'auto', padding: '20px' }}>
+          <div className="glass" style={{ padding: "30px", maxWidth: "800px", margin: "0 auto" }}>
+            <h2>Laboratório de Otimização - {activeSymbol}</h2>
+            <p style={{ opacity: 0.7 }}>O simulador baixará as últimas 5.000 velas e testará todas as combinações de Timeframe, RSI e Martingale.</p>
+            
+            <div style={{ display: 'flex', gap: '16px' }}>
+              <button 
+                onClick={runBacktest} 
+                disabled={isBacktesting || autoCalibrateProgress !== null}
+                style={{ background: "var(--accent)", color: "#000", border: "none", padding: "12px 24px", borderRadius: "6px", fontWeight: "bold", cursor: (isBacktesting || autoCalibrateProgress) ? "not-allowed" : "pointer", fontSize: "1.1rem", marginTop: "16px", flex: 1 }}
+              >
+                {isBacktesting ? "⏳ Processando..." : `▶️ Otimizar Apenas ${activeSymbol}`}
+              </button>
+              <button 
+                onClick={handleAutoCalibrateAll} 
+                disabled={isBacktesting || autoCalibrateProgress !== null}
+                style={{ background: "transparent", color: "var(--accent)", border: "2px solid var(--accent)", padding: "12px 24px", borderRadius: "6px", fontWeight: "bold", cursor: (isBacktesting || autoCalibrateProgress) ? "not-allowed" : "pointer", fontSize: "1.1rem", marginTop: "16px", flex: 1 }}
+              >
+                {autoCalibrateProgress ? "⏳ Auto-Calibrando..." : "⚡ Auto-Calibrar Todo o Portfólio"}
+              </button>
+            </div>
+            
+            {autoCalibrateProgress && (
+              <div style={{ marginTop: '20px', padding: '16px', background: 'rgba(38, 166, 154, 0.1)', borderRadius: '8px', border: '1px solid var(--accent)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                  <span style={{ fontWeight: 'bold' }}>Progresso da Auto-Calibração</span>
+                  <span>{autoCalibrateProgress.current} / {autoCalibrateProgress.total}</span>
+                </div>
+                <div style={{ width: '100%', height: '8px', background: 'rgba(0,0,0,0.5)', borderRadius: '4px', overflow: 'hidden', marginBottom: '8px' }}>
+                  <div style={{ width: `${(autoCalibrateProgress.current / autoCalibrateProgress.total) * 100}%`, height: '100%', background: 'var(--accent)', transition: 'width 0.3s' }}></div>
+                </div>
+                <div style={{ fontSize: '0.9rem', opacity: 0.8 }}>{autoCalibrateProgress.message}</div>
+              </div>
+            )}
+            
+            {backtestResults.length > 0 && !autoCalibrateProgress && (
+              <div style={{ marginTop: "30px" }}>
+                <h3>🏆 Top 5 Estratégias Lucrativas</h3>
+                <div style={{ display: "flex", flexDirection: "column", gap: "12px", marginTop: "16px" }}>
+                  {backtestResults.map((res, idx) => (
+                    <div key={idx} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "rgba(0,0,0,0.3)", padding: "16px", borderRadius: "8px", border: idx === 0 ? "2px solid var(--accent)" : "1px solid rgba(255,255,255,0.1)" }}>
+                      <div>
+                        {idx === 0 && <div style={{ color: "var(--accent)", fontSize: "0.8rem", fontWeight: "bold", marginBottom: "4px" }}>RECOMENDADO</div>}
+                        <div style={{ fontSize: "1.1rem", fontWeight: "bold" }}>
+                          {res.timeframe_label} | {res.candles} Velas | Gale {res.gale} | RSI {res.rsi_label}
+                        </div>
+                        <div style={{ display: "flex", gap: "16px", marginTop: "8px", opacity: 0.8, fontSize: "0.9rem" }}>
+                          <span>Win Rate: <strong style={{ color: res.win_rate >= 90 ? "var(--success)" : "white" }}>{res.win_rate.toFixed(1)}%</strong></span>
+                          <span>PnL: <strong style={{ color: "var(--success)" }}>${res.pnl.toFixed(2)}</strong></span>
+                          <span>{res.wins} Wins / {res.losses} Losses</span>
+                        </div>
+                      </div>
+                      <button 
+                        onClick={() => handleApplyStrategy(res)}
+                        style={{ background: idx === 0 ? "var(--accent)" : "rgba(255,255,255,0.1)", color: idx === 0 ? "#000" : "white", border: "none", padding: "10px 20px", borderRadius: "4px", fontWeight: "bold", cursor: "pointer", transition: "0.2s" }}
+                      >
+                        Aplicar Estratégia
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

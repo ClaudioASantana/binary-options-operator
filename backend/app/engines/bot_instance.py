@@ -33,7 +33,7 @@ class BotInstance:
         
         self.paper_trader = PaperTrader(initial_balance=1000.0, payout_rate=0.95)
         
-        self.active_config = {"timeframe": 300, "candles": 5}
+        self.active_config = {"timeframe": 300, "candles": 5, "gale": 3, "rsi_oversold": 30, "rsi_overbought": 70}
         self.auto_optimize = False
         self.global_catalog = []
         
@@ -134,14 +134,18 @@ class BotInstance:
                     if signal.type.value != "NONE":
                         strategy_info = f"M{tf//60}/{req_candles}V"
                         rsi_val = calculate_rsi(builder.closed_candles)
-                        if signal.type.value == "CALL" and rsi_val >= 30:
+                        rsi_os = config.get("rsi_oversold", 30)
+                        rsi_ob = config.get("rsi_overbought", 70)
+                        if signal.type.value == "CALL" and rsi_val >= rsi_os:
                             # logger.warning(f"🚫 [{self.symbol} - {strategy_info}] CALL bloqueado. RSI={rsi_val}")
                             signal.type = SignalType.NONE
-                        elif signal.type.value == "PUT" and rsi_val <= 70:
+                        elif signal.type.value == "PUT" and rsi_val <= rsi_ob:
                             # logger.warning(f"🚫 [{self.symbol} - {strategy_info}] PUT bloqueado. RSI={rsi_val}")
                             signal.type = SignalType.NONE
                             
                     if signal.type.value != "NONE":
+                        # Update paper trader gale max before opening trade
+                        self.paper_trader.max_gale = config.get("gale", 3)
                         self.last_signal_direction = "CALL" if signal.type.value == "BUY" else "PUT"
                         news_status = self.news_filter.check_safety(tick.epoch)
                         if not news_status["safe"]:

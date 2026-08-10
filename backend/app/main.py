@@ -109,16 +109,31 @@ async def websocket_endpoint(websocket: WebSocket):
                         await websocket.send_json({"event": "simulator", "symbol": new_sym, "data": b.paper_trader.get_state()})
                         await websocket.send_json({"event": "catalog", "symbol": new_sym, "data": {"catalog": b.global_catalog, "active_config": b.active_config, "auto_optimize": b.auto_optimize}})
                 elif cmd.get("command") == "SET_CONFIG":
-                    if watching_symbol in bots:
-                        b = bots[watching_symbol]
+                    target_symbol = cmd.get("symbol", watching_symbol)
+                    if target_symbol in bots:
+                        b = bots[target_symbol]
                         b.active_config["timeframe"] = cmd.get("timeframe", 300)
-                        b.active_config["candles"] = cmd.get("candles", 9)
-                        logger.info(f"[{watching_symbol}] Configuração local alterada: M{b.active_config['timeframe']//60} / {b.active_config['candles']} velas")
+                        b.active_config["candles"] = cmd.get("candles", 5)
+                        b.active_config["gale"] = cmd.get("gale", 3)
+                        b.active_config["rsi_oversold"] = cmd.get("rsi_oversold", 30)
+                        b.active_config["rsi_overbought"] = cmd.get("rsi_overbought", 70)
+                        b.paper_trader.max_gale = cmd.get("gale", 3)
+                        logger.info(f"[{target_symbol}] Configuração local alterada: M{b.active_config['timeframe']//60} / {b.active_config['candles']} velas / Gale {b.active_config['gale']} / RSI {b.active_config['rsi_oversold']}-{b.active_config['rsi_overbought']}")
+                        await manager.broadcast({"event": "simulator", "symbol": target_symbol, "data": b.paper_trader.get_state()})
                 elif cmd.get("command") == "TOGGLE_AUTO_OPTIMIZE":
                     if watching_symbol in bots:
                         b = bots[watching_symbol]
-                        b.auto_optimize = cmd.get("enabled", False)
-                        logger.info(f"[{watching_symbol}] Auto-Otimização local alterada para: {b.auto_optimize}")
+                        b.auto_optimize = not b.auto_optimize
+                        logger.info(f"[{watching_symbol}] Auto-Optimize: {b.auto_optimize}")
+                        await websocket.send_json({"event": "catalog", "symbol": watching_symbol, "data": {"catalog": b.global_catalog, "active_config": b.active_config, "auto_optimize": b.auto_optimize}})
+                elif cmd.get("command") == "TOGGLE_AUTO_OPTIMIZE_ALL":
+                    is_active = cmd.get("active", True)
+                    for sym, bot_inst in bots.items():
+                        bot_inst.auto_optimize = is_active
+                        logger.info(f"[{sym}] Auto-Optimize Global: {bot_inst.auto_optimize}")
+                    if watching_symbol in bots:
+                        b = bots[watching_symbol]
+                        await websocket.send_json({"event": "catalog", "symbol": watching_symbol, "data": {"catalog": b.global_catalog, "active_config": b.active_config, "auto_optimize": b.auto_optimize}})
             except Exception as e:
                 logger.error(f"Erro processando WS: {e}")
     except WebSocketDisconnect:
@@ -151,3 +166,55 @@ def get_portfolio():
         "total_pnl": total_pnl,
         "bots_count": len(bots)
     }
+
+from pydantic import BaseModel
+class OptimizeRequest(BaseModel):
+    symbol: str
+
+@app.post("/api/optimize")
+async def api_optimize(req: OptimizeRequest):
+    import sys
+    import os
+    scripts_path = os.path.join(os.path.dirname(__file__), '..', 'scripts')
+    if scripts_path not in sys.path:
+        sys.path.append(scripts_path)
+    from optimizer import download_history, run_simulation
+    
+    results = []
+    logger.info(f"[{req.symbol}] Baixando histórico para otimização...")
+    history_m5 = await download_history(req.symbol, 300, 5000)
+    history_m1 = await download_history(req.symbol, 60, 5000)
+    
+    for history, timeframe_name in [(history_m5, "M5"), (history_m1, "M1")]:
+        if not history: continue
+        for consecutive_candles in [3, 5, 7, 9]:
+            for max_gale in [1, 2, 3]:
+                for rsi_combo in [(35, 65), (30, 70), (25, 75)]:
+                    rsi_over, rsi_under = rsi_combo
+                    res = run_simulation(
+                        history,
+                        consecutive_candles,
+                        rsi_over,
+                        rsi_under,
+                        max_gale,
+                        stake=10.0,
+                        payout_rate=0.95
+                    )
+                    total = res['wins'] + res['losses']
+                    win_rate = (res['wins'] / total * 100) if total > 0 else 0
+                    results.append({
+                        "timeframe": 300 if timeframe_name == "M5" else 60,
+                        "timeframe_label": timeframe_name,
+                        "candles": consecutive_candles,
+                        "gale": max_gale,
+                        "rsi_oversold": rsi_over,
+                        "rsi_overbought": rsi_under,
+                        "rsi_label": f"{rsi_over}/{rsi_under}",
+                        "wins": res['wins'],
+                        "losses": res['losses'],
+                        "win_rate": win_rate,
+                        "pnl": res['pnl']
+                    })
+                    
+    results.sort(key=lambda x: x['pnl'], reverse=True)
+    return {"results": results[:5]}
