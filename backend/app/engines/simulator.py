@@ -5,7 +5,7 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 class PaperTrader:
-    def __init__(self, initial_balance: float = 1000.0, payout_rate: float = 0.95):
+    def __init__(self, initial_balance: float = 200.0, payout_rate: float = 0.95):
         self.initial_balance = initial_balance
         self.balance = initial_balance
         self.payout_rate = payout_rate

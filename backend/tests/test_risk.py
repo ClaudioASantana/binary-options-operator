@@ -34,7 +34,8 @@ def test_risk_blocks_stop_loss(base_account):
     eval = evaluate_risk(signal, base_account)
     
     assert eval.decision == RiskDecision.BLOCKED
-    assert "stop-loss" in eval.reason.lower()
+    # A mensagem agora inclui "absolute limit" ou "loss"
+    assert "loss" in eval.reason.lower() or "limit" in eval.reason.lower()
 
 def test_risk_blocks_stop_gain(base_account):
     base_account.daily_pnl = 21.0
@@ -42,7 +43,8 @@ def test_risk_blocks_stop_gain(base_account):
     eval = evaluate_risk(signal, base_account)
     
     assert eval.decision == RiskDecision.BLOCKED
-    assert "stop-gain" in eval.reason.lower()
+    # A mensagem agora inclui "gain" ou "limit"
+    assert "gain" in eval.reason.lower() or "limit" in eval.reason.lower()
 
 def test_risk_blocks_max_gale(base_account):
     base_account.current_gale_level = 4

@@ -33,7 +33,8 @@ export default function Home() {
 
   useEffect(() => {
     // Connect to WebSocket
-    ws.current = new WebSocket("ws://127.0.0.1:8000/ws");
+    const host = window.location.hostname;
+    ws.current = new WebSocket(`ws://${host}:8000/ws`);
     
     ws.current.onmessage = (event) => {
       const msg = JSON.parse(event.data);
@@ -71,7 +72,8 @@ export default function Home() {
   useEffect(() => {
     const fetchPortfolio = async () => {
       try {
-        const res = await fetch("http://localhost:8000/portfolio");
+        const host = window.location.hostname;
+        const res = await fetch(`http://${host}:8000/portfolio`);
         const data = await res.json();
         setPortfolio(data);
       } catch (e) {}
@@ -181,7 +183,8 @@ export default function Home() {
     setIsBacktesting(true);
     setBacktestResults([]);
     try {
-      const res = await fetch("http://localhost:8000/api/optimize", {
+      const host = window.location.hostname;
+      const res = await fetch(`http://${host}:8000/api/optimize`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ symbol: activeSymbol })
@@ -203,7 +206,8 @@ export default function Home() {
       setAutoCalibrateProgress({ current: i + 1, total: symbols.length, message: `Baixando velas e otimizando ${sym}...` });
       
       try {
-        const res = await fetch("http://localhost:8000/api/optimize", {
+        const host = window.location.hostname;
+        const res = await fetch(`http://${host}:8000/api/optimize`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ symbol: sym })
