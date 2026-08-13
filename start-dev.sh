@@ -70,9 +70,9 @@ if [ ! -d "frontend/node_modules" ]; then
 fi
 
 # 3. Start Backend
-log_info "Starting Backend (FastAPI) on port 8000..."
+log_info "Starting Backend (FastAPI) on port 8020..."
 cd backend
-./venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload &
+./venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8020 --reload &
 BACKEND_PID=$!
 cd ..
 
@@ -80,15 +80,15 @@ cd ..
 sleep 2
 
 # 4. Start Frontend
-log_info "Starting Frontend (Next.js) on port 3000..."
+log_info "Starting Frontend (Next.js) on port 3020..."
 cd frontend
-npm run dev -- -H 0.0.0.0 -p 3000 &
+npm run dev -- -H 0.0.0.0 -p 3020 &
 FRONTEND_PID=$!
 cd ..
 
 log_success "Development servers started!"
-log_info "- Frontend: http://localhost:3000"
-log_info "- Backend API: http://localhost:8000"
+log_info "- Frontend: http://localhost:3020"
+log_info "- Backend API: http://localhost:8020"
 log_info "Press Ctrl+C to stop both servers."
 
 # Keep script running and wait for background processes

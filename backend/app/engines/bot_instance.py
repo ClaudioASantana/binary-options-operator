@@ -23,6 +23,7 @@ from app.models.market import (
     RiskDecision, DerivProposal
 )
 from app.engines.news import NewsFilter
+from app.services import db
 from app.engines.indicators import calculate_rsi
 from app.engines.risk import evaluate_risk, get_effective_risk_limits
 from app.engines.decision_harness import DecisionHarness, get_decision_harness, DecisionHarnessConfig
@@ -178,6 +179,8 @@ class BotInstance:
         # Check expirations
         finished_trades = self.paper_trader.check_expirations(tick.epoch, tick.quote)
         if finished_trades:
+            for ft in finished_trades:
+                db.update_trade_result(ft["id"], ft["status"], ft.get("profit", 0.0))
             await self.manager.broadcast({
                 "event": "simulator",
                 "symbol": self.symbol,
@@ -274,12 +277,49 @@ class BotInstance:
             environment=self.environment,
         )
         
-        # Usar Decision Harness para avaliar sinal (COM AGENTE)
+        # Obter stake preliminar baseado na gestao de risco local
+        preliminary_stake = self.paper_trader.stake_initial
+        if self.paper_trader.consecutive_losses > 0:
+            preliminary_stake = self.paper_trader.stake_initial * (2 ** self.paper_trader.consecutive_losses)
+            preliminary_stake = min(preliminary_stake, 100.0) # Protecao extra
+            
+        logger.info(f"Solicitando cotação para {signal.type.value} de ${preliminary_stake:.2f}...")
+        raw_proposal = await self.deriv_client.request_proposal(
+            direction=signal.type.value,
+            amount=preliminary_stake,
+            duration=5,
+            duration_unit="m"
+        )
+        
+        deriv_proposal_model = None
+        if raw_proposal and "proposal" in raw_proposal:
+            p = raw_proposal["proposal"]
+            deriv_proposal_model = DerivProposal(
+                proposal_id=p["id"],
+                symbol=self.symbol,
+                contract_type=signal.type.value,
+                duration=5,
+                duration_unit="m",
+                amount=preliminary_stake,
+                price=p.get("ask_price", preliminary_stake),
+                payout=p.get("payout", 0),
+                longcode=p.get("longcode", ""),
+                shortcode=p.get("shortcode", ""),
+                display_value=p.get("display_value", ""),
+                spot=p.get("spot", tick.quote),
+                spot_time=p.get("spot_time", tick.epoch),
+                payout_percent=((p.get("payout", 0) - p.get("ask_price", 1)) / p.get("ask_price", 1)) * 100 if p.get("ask_price", 0) > 0 else 0,
+                environment=self.environment,
+                currency="USD"
+            )
+            
+        # Usar Decision Harness para avaliar sinal (COM AGENTE E PROPOSAL)
         output = self.harness.evaluate(
             signal=signal,
             account=account_state,
-            agent_service=self.agent_service,  # Passa o agent_service
+            agent_service=self.agent_service,
             news_filter=self.news_filter,
+            proposal=deriv_proposal_model
         )
         
         # Broadcast agent message if available
@@ -307,6 +347,7 @@ class BotInstance:
                 "tick": tick,
                 "config": config,
                 "strategy_info": strategy_info,
+                "proposal_id": deriv_proposal_model.proposal_id if deriv_proposal_model else None,
                 "created_at": time.time(),
             }
             
@@ -325,7 +366,8 @@ class BotInstance:
         
         # Auto-approved - execute
         if output.final_decision == RiskDecision.APPROVED:
-            await self._execute_trade(signal, strategy_info, tick, config, output.stake_to_use)
+            proposal_id = deriv_proposal_model.proposal_id if deriv_proposal_model else None
+            await self._execute_trade(signal, strategy_info, tick, config, output.stake_to_use, proposal_id=proposal_id)
     
     async def _execute_trade(
         self,
@@ -333,17 +375,43 @@ class BotInstance:
         strategy_info: str,
         tick: Tick,
         config: dict,
-        stake: float
+        stake: float,
+        proposal_id: str = None
     ):
-        """Executa trade apos aprovacao."""
+        """Executa trade apos aprovacao, na Deriv e no Simulador."""
         logger.info(f"✅ [{self.symbol} - {strategy_info}] EXECUTANDO: {signal.type.value} stake={stake:.2f}")
+        
+        # Enviar para a Deriv Real/Demo
+        if self.token:
+            await self.deriv_client.buy_contract(signal.type.value, stake, proposal_id=proposal_id)
         
         # Update paper trader gale max
         self.paper_trader.max_gale = config.get("gale", 3)
         self.last_signal_direction = signal.type.value
         
         # Open trade in simulator
-        self.paper_trader.open_trade(signal.type.value, config["timeframe"], tick.epoch, tick.quote)
+        trade_id = self.paper_trader.register_trade(
+            direction=signal.type.value,
+            entry_price=tick.quote,
+            stake=stake,
+            timeframe_seconds=config["timeframe"],
+            current_epoch=tick.epoch
+        )
+        
+        # Save to DB
+        db.save_trade({
+            "id": trade_id,
+            "timestamp": tick.epoch,
+            "symbol": self.symbol,
+            "strategy": strategy_info,
+            "direction": signal.type.value,
+            "stake": stake,
+            "payout_percent": self.paper_trader.payout_rate * 100,
+            "environment": "deriv" if self.token else "paper",
+            "agent_review": "", # Could be extracted from DecisionHarnessOutput if needed
+            "decision_reason": signal.reason,
+            "result": "PENDING"
+        })
         
         await self.manager.broadcast({
             "event": "simulator",
@@ -381,13 +449,15 @@ class BotInstance:
         pending = self.pending_confirmations.pop(decision_id)
         
         if confirmed:
-            # Execute the trade
+            # Execute
+            proposal_id = pending.get("proposal_id")
             await self._execute_trade(
                 signal=pending["signal"],
                 strategy_info=pending["strategy_info"],
                 tick=pending["tick"],
                 config=pending["config"],
                 stake=pending["output"].stake_to_use,
+                proposal_id=proposal_id
             )
         else:
             logger.info(f"⛔ [{self.symbol}] Trade rejeitado pelo usuario (decision_id={decision_id})")

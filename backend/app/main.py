@@ -1,3 +1,5 @@
+from typing import Dict, Any
+from typing import Dict
 """
 Binary Options Operator - Backend FastAPI com seguranca aprimorada.
 
@@ -369,3 +371,116 @@ async def api_optimize(req: OptimizeRequest):
     
     results.sort(key=lambda x: x['pnl'], reverse=True)
     return {"results": results[:5]}
+
+
+# =============================================================================
+# BACKTESTING API ENDPOINTS
+# =============================================================================
+
+class BacktestRunRequest(BaseModel):
+    symbol: str = "R_100"
+    timeframe: int = 300  # 60 (M1), 300 (M5), 900 (M15)
+    consecutive_candles: int = 5
+    rsi_oversold: float = 30.0
+    rsi_overbought: float = 70.0
+    initial_balance: float = 1000.0
+    stake_initial: float = 10.0
+    payout_rate: float = 0.95
+    max_gale: int = 2
+    count: int = 5000
+
+
+class BacktestRunResponse(BaseModel):
+    status: str
+    message: str
+    result: Optional[Dict[str, Any]] = None
+
+
+@app.post("/api/backtest/run")
+async def api_backtest_run(req: BacktestRunRequest):
+    """
+    Executa um backtest com os parametros especificados.
+    
+    Este endpoint e sincrono e pode demorar dependendo da quantidade de dados.
+    Para backtests grandes, considere usar o endpoint de otimizacao assincrono.
+    """
+    import sys
+    sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'scripts'))
+    from optimizer import download_history
+    from app.engines.backtester import Backtester, BacktesterConfig
+    
+    logger.info(f"Iniciando backtest para {req.symbol}...")
+    
+    # Baixar historico
+    history = await download_history(req.symbol, req.timeframe, req.count)
+    if not history:
+        return BacktestRunResponse(
+            status="error",
+            message="Falha ao baixar historico. Verifique token e conexao."
+        )
+    
+    # Configurar backtester
+    strategy_params = {
+        "timeframe": req.timeframe,
+        "consecutive_candles": req.consecutive_candles,
+        "rsi_oversold": req.rsi_oversold,
+        "rsi_overbought": req.rsi_overbought,
+    }
+    
+    backtester_config = BacktesterConfig(
+        initial_balance=req.initial_balance,
+        stake_initial=req.stake_initial,
+        payout_rate=req.payout_rate,
+        max_gale=req.max_gale,
+        apply_risk_limits=True,
+    )
+    
+    backtester = Backtester(backtester_config)
+    result = backtester.run(history, strategy_params)
+    
+    return BacktestRunResponse(
+        status="success",
+        message=f"Backtest concluido com {result.total_trades} trades",
+        result=result.to_dict(),
+    )
+
+
+class OptimizeRequest(BaseModel):
+    symbol: str = "R_100"
+    count: int = 5000
+    initial_balance: float = 1000.0
+    stake_initial: float = 10.0
+    payout_rate: float = 0.95
+
+
+@app.post("/api/optimize/run")
+async def api_optimize_run(req: OptimizeRequest):
+    """
+    Executa otimizacao de parametros para encontrar as melhores configuracoes.
+    
+    Testa multiplas combinacoes de timeframe, velas consecutivas, gale e RSI.
+    Retorna as top 20 configuracoes ordenadas por PnL.
+    """
+    import sys
+    sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'scripts'))
+    from optimizer import optimize as run_optimize
+    
+    logger.info(f"Iniciando otimizacao para {req.symbol}...")
+    
+    try:
+        results = await run_optimize(
+            symbol=req.symbol,
+            count=req.count,
+            initial_balance=req.initial_balance,
+            stake_initial=req.stake_initial,
+            payout_rate=req.payout_rate,
+        )
+        
+        return {
+            "status": "success",
+            "message": f"Otimizacao concluida. {len(results)} configuracoes testadas.",
+            "top_results": results[:20],  # Retorna top 20
+        }
+    except Exception as e:
+        logger.error(f"Erro na otimizacao: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

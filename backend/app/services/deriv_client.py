@@ -1,10 +1,11 @@
 import json
+import time
 import asyncio
 import inspect
 import logging
 import urllib.request
 import websockets
-from typing import Callable, Any, List
+from typing import Callable, Any, List, Dict, Optional
 from app.models.market import Tick
 
 logger = logging.getLogger(__name__)
@@ -17,6 +18,7 @@ class DerivClient:
         self.connection = None
         self.callbacks = []
         self.history_callbacks = []
+        self.pending_requests: Dict[int, asyncio.Future] = {}
         self._running = False
 
     def add_tick_callback(self, callback: Callable[[Tick], Any]):
@@ -102,25 +104,66 @@ class DerivClient:
                     "req_id": req_id
                 }))
 
-    async def buy_contract(self, direction: str, amount: float):
+    async def request_proposal(self, direction: str, amount: float, duration: int = 5, duration_unit: str = "m") -> Optional[dict]:
+        """Solicita uma cotação (proposta) da Deriv antes de comprar."""
+        if not self.connection:
+            logger.error("Cannot request proposal: No WebSocket connection.")
+            return None
+            
+        contract_type = "CALL" if direction.upper() == "CALL" else "PUT"
+        req_id = int(time.time() * 1000) % 100000
+        
+        future = asyncio.Future()
+        self.pending_requests[req_id] = future
+        
+        req = {
+            "proposal": 1,
+            "amount": amount,
+            "basis": "stake",
+            "contract_type": contract_type,
+            "currency": "USD",
+            "duration": duration,
+            "duration_unit": duration_unit,
+            "symbol": self.symbol,
+            "req_id": req_id
+        }
+        
+        await self.connection.send(json.dumps(req))
+        try:
+            return await asyncio.wait_for(future, timeout=5.0)
+        except asyncio.TimeoutError:
+            logger.error("Timeout aguardando proposal da Deriv.")
+            self.pending_requests.pop(req_id, None)
+            return None
+
+    async def buy_contract(self, direction: str, amount: float, proposal_id: str = None):
         if not self.connection:
             logger.error("Cannot buy: No WebSocket connection.")
             return
-        contract_type = "CALL" if direction.upper() == "CALL" else "PUT"
-        req = {
-            "buy": 1,
-            "price": amount,
-            "parameters": {
-                "amount": amount,
-                "basis": "stake",
-                "contract_type": contract_type,
-                "currency": "USD",
-                "duration": 5,
-                "duration_unit": "m",
-                "symbol": self.symbol
+            
+        if proposal_id:
+            req = {
+                "buy": proposal_id,
+                "price": amount
             }
-        }
-        logger.info(f"🚀 Enviando Ordem Oficial para Deriv: {contract_type} | Stake: ${amount}")
+            logger.info(f"🚀 Enviando Ordem (via Proposal ID) para Deriv | Max Stake: ${amount}")
+        else:
+            contract_type = "CALL" if direction.upper() == "CALL" else "PUT"
+            req = {
+                "buy": 1,
+                "price": amount,
+                "parameters": {
+                    "amount": amount,
+                    "basis": "stake",
+                    "contract_type": contract_type,
+                    "currency": "USD",
+                    "duration": 5,
+                    "duration_unit": "m",
+                    "symbol": self.symbol
+                }
+            }
+            logger.info(f"🚀 Enviando Ordem Direta para Deriv: {contract_type} | Stake: ${amount}")
+            
         await self.connection.send(json.dumps(req))
 
     def _handle_message(self, raw_message: str):
@@ -128,7 +171,19 @@ class DerivClient:
         
         if "error" in data:
             logger.error(f"Deriv API Error: {data['error']}")
+            req_id = data.get("req_id")
+            if req_id is not None and req_id in self.pending_requests:
+                if not self.pending_requests[req_id].done():
+                    self.pending_requests[req_id].set_exception(Exception(data['error'].get('message', 'Unknown Error')))
+                del self.pending_requests[req_id]
             return
+            
+        req_id = data.get("req_id")
+        if req_id is not None and req_id in self.pending_requests:
+            if not self.pending_requests[req_id].done():
+                self.pending_requests[req_id].set_result(data)
+            del self.pending_requests[req_id]
+            # Nao damos return pois a msg pode precisar ser processada abaixo tambem
             
         if "authorize" in data:
             logger.info(f"✅ Autenticado com sucesso na Deriv! (Conta: {data['authorize']['currency']})")

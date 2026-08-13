@@ -16,6 +16,9 @@ export default function Home() {
   const [portfolio, setPortfolio] = useState<any>(null);
   const [activeSymbol, setActiveSymbol] = useState<string>("R_100");
   
+  // Manual Confirmation State
+  const [pendingConfirmation, setPendingConfirmation] = useState<any>(null);
+
   // Backtest State
   const [currentView, setCurrentView] = useState<"dashboard" | "backtest">("dashboard");
   const [backtestResults, setBacktestResults] = useState<any[]>([]);
@@ -32,9 +35,24 @@ export default function Home() {
   const chartSeriesRef = useRef<any>(null);
 
   useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (pendingConfirmation) {
+      interval = setInterval(() => {
+        if (Date.now() > pendingConfirmation.expiresAt) {
+          setPendingConfirmation(null);
+        } else {
+          // Force re-render to update timer UI
+          setPendingConfirmation({ ...pendingConfirmation });
+        }
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [pendingConfirmation]);
+
+  useEffect(() => {
     // Connect to WebSocket
     const host = window.location.hostname;
-    ws.current = new WebSocket(`ws://${host}:8000/ws`);
+    ws.current = new WebSocket(`ws://${host}:8020/ws`);
     
     ws.current.onmessage = (event) => {
       const msg = JSON.parse(event.data);
@@ -61,6 +79,15 @@ export default function Home() {
         if (msg.data.news_status) setNewsStatus(msg.data.news_status);
       } else if (msg.event === "active_symbol") {
         setActiveSymbol(msg.data);
+      } else if (msg.event === "manual_confirmation_required") {
+        setPendingConfirmation({ ...msg.data, expiresAt: Date.now() + (msg.data.timeout_seconds || 30) * 1000 });
+      } else if (msg.event === "manual_confirmation_result") {
+        setPendingConfirmation((prev: any) => {
+          if (prev && prev.decision_id === msg.data.decision_id) {
+            return null;
+          }
+          return prev;
+        });
       }
     };
 
@@ -73,7 +100,7 @@ export default function Home() {
     const fetchPortfolio = async () => {
       try {
         const host = window.location.hostname;
-        const res = await fetch(`http://${host}:8000/portfolio`);
+        const res = await fetch(`http://${host}:8020/portfolio`);
         const data = await res.json();
         setPortfolio(data);
       } catch (e) {}
@@ -148,8 +175,19 @@ export default function Home() {
     }
   }, [liveData.candle]);
 
+  const handleConfirmTrade = (confirmed: boolean) => {
+    if (ws.current && pendingConfirmation) {
+      ws.current.send(JSON.stringify({ 
+        command: "CONFIRM_TRADE", 
+        decision_id: pendingConfirmation.decision_id, 
+        confirmed 
+      }));
+      setPendingConfirmation(null);
+    }
+  };
+
   // Modo Autônomo: Os métodos handleApprove e handleIgnore foram removidos.
-  // O backend agora executa ordens e salva logs automaticamente.
+  // O backend agora executa ordens e salva logs automaticamente, a menos que exija confirmação.
 
   const handleSetConfig = (timeframe: number, candles: number) => {
     if (ws.current) {
@@ -184,7 +222,7 @@ export default function Home() {
     setBacktestResults([]);
     try {
       const host = window.location.hostname;
-      const res = await fetch(`http://${host}:8000/api/optimize`, {
+      const res = await fetch(`http://${host}:8020/api/optimize`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ symbol: activeSymbol })
@@ -207,7 +245,7 @@ export default function Home() {
       
       try {
         const host = window.location.hostname;
-        const res = await fetch(`http://${host}:8000/api/optimize`, {
+        const res = await fetch(`http://${host}:8020/api/optimize`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ symbol: sym })
@@ -658,6 +696,112 @@ export default function Home() {
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Manual Confirmation Modal Overlay */}
+      {pendingConfirmation && (
+        <div style={{
+          position: "fixed",
+          top: 0, left: 0, right: 0, bottom: 0,
+          background: "rgba(0, 0, 0, 0.75)",
+          backdropFilter: "blur(8px)",
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          zIndex: 9999
+        }}>
+          <div className="glass" style={{ 
+            padding: "32px", 
+            borderRadius: "16px", 
+            maxWidth: "500px", 
+            width: "90%",
+            textAlign: "center",
+            boxShadow: "0 20px 40px rgba(0,0,0,0.5)",
+            border: `2px solid ${pendingConfirmation.signal_type === "CALL" ? "var(--success)" : "var(--danger)"}`
+          }}>
+            <h2 style={{ margin: "0 0 16px 0", color: "white" }}>⚠️ Confirmação Necessária</h2>
+            <p style={{ opacity: 0.8, marginBottom: "24px" }}>{pendingConfirmation.reason || "A IA sinalizou uma operação de risco e aguarda sua aprovação."}</p>
+            
+            <div style={{ 
+              display: "flex", 
+              justifyContent: "center", 
+              alignItems: "center",
+              gap: "24px",
+              background: "rgba(0,0,0,0.4)",
+              padding: "20px",
+              borderRadius: "12px",
+              marginBottom: "24px"
+            }}>
+              <div>
+                <div style={{ fontSize: "0.8rem", opacity: 0.6, textTransform: "uppercase" }}>Sinal</div>
+                <div style={{ 
+                  fontSize: "1.8rem", 
+                  fontWeight: "bold",
+                  color: pendingConfirmation.signal_type === "CALL" ? "var(--success)" : "var(--danger)"
+                }}>
+                  {pendingConfirmation.signal_type}
+                </div>
+              </div>
+              <div style={{ width: "1px", height: "40px", background: "rgba(255,255,255,0.2)" }}></div>
+              <div>
+                <div style={{ fontSize: "0.8rem", opacity: 0.6, textTransform: "uppercase" }}>Stake</div>
+                <div style={{ fontSize: "1.8rem", fontWeight: "bold" }}>
+                  ${pendingConfirmation.stake?.toFixed(2) || "0.00"}
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: "flex", gap: "16px" }}>
+              <button 
+                onClick={() => handleConfirmTrade(false)}
+                style={{ 
+                  flex: 1, 
+                  padding: "16px", 
+                  background: "rgba(239, 83, 80, 0.15)", 
+                  color: "var(--danger)",
+                  border: "2px solid var(--danger)",
+                  borderRadius: "8px",
+                  fontSize: "1.1rem",
+                  fontWeight: "bold",
+                  cursor: "pointer",
+                  transition: "all 0.2s"
+                }}
+              >
+                ❌ Rejeitar
+              </button>
+              <button 
+                onClick={() => handleConfirmTrade(true)}
+                style={{ 
+                  flex: 1, 
+                  padding: "16px", 
+                  background: "var(--success)", 
+                  color: "#000",
+                  border: "none",
+                  borderRadius: "8px",
+                  fontSize: "1.1rem",
+                  fontWeight: "bold",
+                  cursor: "pointer",
+                  transition: "all 0.2s",
+                  boxShadow: "0 0 15px rgba(38, 166, 154, 0.4)"
+                }}
+              >
+                ✅ Executar
+              </button>
+            </div>
+
+            <div style={{ marginTop: "24px", width: "100%", height: "4px", background: "rgba(255,255,255,0.1)", borderRadius: "2px", overflow: "hidden" }}>
+              <div style={{ 
+                width: `${Math.max(0, ((pendingConfirmation.expiresAt - Date.now()) / (pendingConfirmation.timeout_seconds * 1000)) * 100)}%`, 
+                height: "100%", 
+                background: "var(--accent)",
+                transition: "width 1s linear" 
+              }}></div>
+            </div>
+            <div style={{ fontSize: "0.75rem", opacity: 0.5, marginTop: "8px" }}>
+              Cancelamento automático em {Math.max(0, Math.ceil((pendingConfirmation.expiresAt - Date.now()) / 1000))}s
+            </div>
           </div>
         </div>
       )}

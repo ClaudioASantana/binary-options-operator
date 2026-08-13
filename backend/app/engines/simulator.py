@@ -34,6 +34,7 @@ class PaperTrader:
         }
         self.pending_trades.append(trade)
         logger.info(f"📊 [PaperTrader] Trade Registrado: {direction} | Stake: ${stake} | Entry: {entry_price} | Expira em: {timeframe_seconds}s")
+        return trade["id"]
         
     def check_expirations(self, current_epoch: int, current_price: float) -> list:
         finished = []
