@@ -4,14 +4,14 @@ import json
 import asyncio
 import websockets
 from dotenv import load_dotenv
-from datetime import datetime
 from typing import List, Dict, Any
 
 # Ensure we can import app modules
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from app.models.market import Candle, CandleDirection
-from app.engines.backtester import Backtester, BacktesterConfig, BacktestResult
+from app.engines.backtester import BacktesterConfig
+from app.engines.optimizer import StrategyOptimizer, OptimizationSummary
 
 load_dotenv()
 
@@ -33,7 +33,7 @@ async def download_history(symbol: str, granularity: int, count: int) -> List[Ca
         await ws.send(json.dumps(req))
         response = json.loads(await ws.recv())
         if "error" in response:
-            print(f"❌ Erro da API: {response['error']}")
+            print(f"Erro da API: {response['error']}")
             return []
             
         candles_raw = response.get("candles", [])
@@ -63,57 +63,80 @@ async def optimize(
     """
     Roda otimizacao de parametros para o simbolo especificado.
     
-    Testa combinacoes de:
-    - timeframe (60s, 300s)
-    - consecutive_candles (3, 5, 7, 9)
-    - max_gale (1, 2, 3)
-    - rsi_oversold/overbought (35/65, 30/70, 25/75)
-    
-    Retorna lista dos melhores resultados de backtest.
+    Usa o StrategyOptimizer para testar combinacoes de parametros.
+    Retorna lista dos melhores resultados de backtest, formatados para o frontend.
     """
-    all_results: List[BacktestResult] = []
     
     print(f"Baixando historico para {symbol} (M5 e M1)...")
     history_m5 = await download_history(symbol, 300, count)
     history_m1 = await download_history(symbol, 60, count)
     
+    all_optimized_results = []
+
+    # Param grid para a estrategia de velas consecutivas (default)
+    param_grid_consecutive_candles = {
+        "consecutive_candles": [3, 5, 7, 9],
+        "rsi_period": [14],
+        "rsi_oversold": [30, 25],
+        "rsi_overbought": [70, 75],
+        "use_rsi_filter": [True, False],
+    }
+    
     print(f"Iniciando otimizacao para {symbol}...")
     
-    for history, timeframe in [(history_m5, 300), (history_m1, 60)]:
-        if not history:
+    for history_data, timeframe in [(history_m5, 300), (history_m1, 60)]:
+        if not history_data:
+            print(f"Historico vazio para {symbol} M{timeframe//60}, pulando.")
             continue
         
-        for consecutive_candles in [3, 5, 7, 9]:
-            for max_gale_config in [1, 2, 3]: # max_gale_config limitado a 3 pelo absoluto
-                for rsi_oversold, rsi_overbought in [(35, 65), (30, 70), (25, 75)]:
-                    
-                    strategy_params = {
-                        "timeframe": timeframe,
-                        "consecutive_candles": consecutive_candles,
-                        "rsi_oversold": rsi_oversold,
-                        "rsi_overbought": rsi_overbought,
-                    }
-                    
-                    backtester_config = BacktesterConfig(
-                        initial_balance=initial_balance,
-                        stake_initial=stake_initial,
-                        payout_rate=payout_rate,
-                        max_gale=max_gale_config,
-                        apply_risk_limits=True, # Sempre aplicar limites no otimizador
-                    )
-                    
-                    backtester = Backtester(backtester_config)
-                    result = backtester.run(history, strategy_params)
-                    all_results.append(result)
+        # Otimizar estrategia de Velas Consecutivas
+        backtester_config = BacktesterConfig(
+            initial_balance=initial_balance,
+            stake_initial=stake_initial,
+            payout_rate=payout_rate,
+            max_gale=3,
+            apply_risk_limits=True,
+        )
+        optimizer = StrategyOptimizer(history_data, backtester_config=backtester_config)
+        
+        summary = optimizer.optimize(
+            param_grid=param_grid_consecutive_candles,
+            optimization_metric="composite_score",
+            min_trades=5,
+        )
+        
+        if summary.best_result:
+            res = summary.best_result
+            # Format results for frontend
+            result_dict = {
+                "strategy_type": "consecutive_candles",
+                "timeframe": timeframe,
+                "timeframe_label": f"M{timeframe // 60}",
+                "pnl": res.total_pnl,
+                "win_rate": res.win_rate,
+                "composite_score": res.composite_score,
+                "sharpe_ratio": res.sharpe_ratio,
+                "profit_factor": res.profit_factor,
+                "total_trades": res.total_trades,
+                "max_drawdown_percent": res.max_drawdown_percent,
+                "consecutive_candles": res.params.get("consecutive_candles"),
+                "rsi_oversold": res.params.get("rsi_oversold"),
+                "rsi_overbought": res.params.get("rsi_overbought"),
+                "use_rsi_filter": res.params.get("use_rsi_filter"),
+                "rsi_label": f"{res.params.get('rsi_oversold')}-{res.params.get('rsi_overbought')}",
+                "gale": backtester_config.max_gale,
+                "candles": res.params.get("consecutive_candles"),
+            }
+            all_optimized_results.append(result_dict)
+
+    # Ordenar por composite_score
+    all_optimized_results.sort(key=lambda x: x["composite_score"], reverse=True)
     
-    # Sort by PnL in descending order
-    all_results.sort(key=lambda x: x.total_pnl, reverse=True)
+    print("\nTop 5 Configuracoes Otimizadas (Composite Score):")
+    for idx, r in enumerate(all_optimized_results[:5]):
+        print(f"{idx+1}. M{r['timeframe']//60}/{r['candles']}V/Gale {r['gale']}/RSI {r['rsi_label']} => PnL: ${r['pnl']:.2f} (WR: {r['win_rate']:.1f}%) / Score: {r['composite_score']:.2f}")
     
-    print("\nTop 5 Configuracoes Otimizadas:")
-    for idx, r in enumerate(all_results[:5]):
-        print(f"{idx+1}. Config: M{r.config['timeframe']//60}/{r.config['consecutive_candles']} Velas/Gale {r.config['max_gale']} / RSI {r.config['rsi_oversold']}-{r.config['rsi_overbought']} => PnL: ${r.total_pnl:.2f} (WR: {r.win_rate:.1f}%)")
-    
-    return [r.to_dict() for r in all_results]
+    return all_optimized_results
 
 
 if __name__ == "__main__":

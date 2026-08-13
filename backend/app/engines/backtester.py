@@ -10,10 +10,10 @@ import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 from dataclasses import dataclass, field
-from app.models.market import Candle, CandleDirection, Signal, SignalType, AccountState, RiskDecision
-from app.engines.strategy import evaluate_strategy
+from app.models.market import Candle
+from app.engines.strategy import evaluate_strategy_with_config, StrategyConfig
 from app.engines.risk import evaluate_risk
-from app.validators.risk_limits import AbsoluteLimits, RiskLimits # Importar RiskLimits
+from app.validators.risk_limits import AbsoluteLimits, RiskLimits
 from app.engines.indicators import calculate_rsi
 
 logger = logging.getLogger(__name__)
@@ -141,7 +141,6 @@ class Backtester:
         self,
         history: List[Candle],
         strategy_params: Dict[str, Any],
-        rsi_period: int = 14,
     ) -> BacktestResult:
         """
         Executa backtest em uma serie historica de candles.
@@ -177,12 +176,16 @@ class Backtester:
         largest_win = 0.0
         largest_loss = 0.0
         
-        # Extrair parametros da estrategia
-        consecutive_candles = strategy_params.get("consecutive_candles", 9)
-        rsi_oversold = strategy_params.get("rsi_oversold", 30)
-        rsi_overbought = strategy_params.get("rsi_overbought", 70)
+        # Criar StrategyConfig a partir de strategy_params
+        strategy_config = StrategyConfig(
+            consecutive_candles=strategy_params.get("consecutive_candles", 9),
+            rsi_period=strategy_params.get("rsi_period", 14),
+            rsi_overbought=strategy_params.get("rsi_overbought", 70.0),
+            rsi_oversold=strategy_params.get("rsi_oversold", 30.0),
+            use_rsi_filter=strategy_params.get("use_rsi_filter", True),
+        )
         
-        logger.info(f"Iniciando backtest: {len(history)} candles, consecutive_candles={consecutive_candles}")
+        logger.info(f"Iniciando backtest: {len(history)} candles, consecutive_candles={strategy_config.consecutive_candles}")
         
         for i in range(len(history)):
             current_candle = history[i]
@@ -273,36 +276,21 @@ class Backtester:
                 continue
             
             # 2. Gerar sinal (somente se nao estiver em trade)
-            min_index = rsi_period + consecutive_candles
-            if i < min_index:
+            # Minimo de candles necessarias para RSI e estrategia
+            min_candles_for_strategy = max(strategy_config.consecutive_candles, strategy_config.rsi_period + 1)
+            if i < min_candles_for_strategy - 1: # Ajustado para considerar candles suficientes para o RSI tambem
                 continue
             
-            # Strategy Engine usa seconds_in_cycle para timing
-            # Passar history[:i+1] significa "todos os candles ate o atual"
-            # O Strategy Engine vai usar os `consecutive_candles` mais recentes desta lista.
-            strategy_signal = evaluate_strategy(
-                history[:i+1],
+            strategy_signal = evaluate_strategy_with_config(
+                candles=history[:i+1],
                 seconds_in_cycle=298, # Fixo para backtest de M5
-                consecutive_candles=consecutive_candles # Passar o parametro aqui
+                config=strategy_config
             )
             
             if strategy_signal.type == SignalType.NONE:
                 continue
             
             signal = strategy_signal.type.value
-            
-            # Aplicar filtro RSI manualmente
-            slice_history = history[:i+1]
-            rsi_val = calculate_rsi(slice_history, rsi_period)
-            
-            skip_signal = False
-            if signal == "CALL" and rsi_val >= rsi_oversold:
-                skip_signal = True
-            elif signal == "PUT" and rsi_val <= rsi_overbought:
-                skip_signal = True
-            
-            if skip_signal:
-                continue
             
             # Validar risco antes de entrar
             if self.config.apply_risk_limits:
@@ -346,7 +334,11 @@ class Backtester:
             trade_entry_price = current_candle.close
             trade_entry_epoch = current_candle.epoch
             
-            strategy_info = f"M{strategy_params.get('timeframe', 300)//60}/{consecutive_candles}V"
+            strategy_info = (
+                f"M{strategy_params.get('timeframe', 300)//60}/"
+                f"{strategy_config.consecutive_candles}V/"
+                f"RSI({strategy_config.rsi_period},{strategy_config.rsi_oversold},{strategy_config.rsi_overbought})"
+            )
             
             current_trade = BacktestTrade(
                 entry_epoch=trade_entry_epoch,
@@ -389,10 +381,11 @@ class Backtester:
             max_consecutive_losses=max_consecutive_losses,
             trades=trades,
             config={
-                "consecutive_candles": consecutive_candles,
-                "rsi_oversold": rsi_oversold,
-                "rsi_overbought": rsi_overbought,
-                "rsi_period": rsi_period,
+                "consecutive_candles": strategy_config.consecutive_candles,
+                "rsi_oversold": strategy_config.rsi_oversold,
+                "rsi_overbought": strategy_config.rsi_overbought,
+                "rsi_period": strategy_config.rsi_period,
+                "use_rsi_filter": strategy_config.use_rsi_filter,
                 "initial_balance": self.config.initial_balance,
                 "stake_initial": self.config.stake_initial,
                 "payout_rate": self.config.payout_rate,

@@ -33,21 +33,21 @@ export default function Home() {
   const ws = useRef<WebSocket | null>(null);
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartSeriesRef = useRef<any>(null);
+  const lastTickTime = useRef(0);
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
     if (pendingConfirmation) {
       interval = setInterval(() => {
-        if (Date.now() > pendingConfirmation.expiresAt) {
-          setPendingConfirmation(null);
-        } else {
-          // Force re-render to update timer UI
-          setPendingConfirmation({ ...pendingConfirmation });
-        }
+        setPendingConfirmation((prev: any) => {
+          if (!prev) return null;
+          if (Date.now() > prev.expiresAt) return null;
+          return { ...prev };
+        });
       }, 1000);
     }
     return () => clearInterval(interval);
-  }, [pendingConfirmation]);
+  }, [pendingConfirmation ? pendingConfirmation.decision_id : null]);
 
   useEffect(() => {
     // Connect to WebSocket
@@ -63,7 +63,26 @@ export default function Home() {
       }
       
       if (msg.event === "tick") {
-        setLiveData(msg.data);
+        if (chartSeriesRef.current && msg.data.candle) {
+          const data = {
+            time: msg.data.candle.epoch,
+            open: msg.data.candle.open,
+            high: msg.data.candle.high,
+            low: msg.data.candle.low,
+            close: msg.data.candle.close,
+          };
+          try {
+            chartSeriesRef.current.update(data);
+          } catch (e) {
+            chartSeriesRef.current.setData([data]);
+          }
+        }
+        
+        const now = Date.now();
+        if (now - lastTickTime.current > 1000) {
+          setLiveData(msg.data);
+          lastTickTime.current = now;
+        }
       } else if (msg.event === "signal") {
         setSignal(msg.data);
       } else if (msg.event === "agent_message") {
@@ -158,22 +177,7 @@ export default function Home() {
     }
   }, [activeSymbol]);
 
-  useEffect(() => {
-    if (chartSeriesRef.current && liveData.candle) {
-        const data = {
-            time: liveData.candle.epoch,
-            open: liveData.candle.open,
-            high: liveData.candle.high,
-            low: liveData.candle.low,
-            close: liveData.candle.close,
-        };
-        try {
-            chartSeriesRef.current.update(data);
-        } catch (e) {
-            chartSeriesRef.current.setData([data]);
-        }
-    }
-  }, [liveData.candle]);
+
 
   const handleConfirmTrade = (confirmed: boolean) => {
     if (ws.current && pendingConfirmation) {
